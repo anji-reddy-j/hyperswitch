@@ -456,6 +456,8 @@ impl<F: Clone> TryFrom<PaymentData<F>> for types::PaymentsCaptureData {
     type Error = errors::ApiErrorResponse;
 
     fn try_from(payment_data: PaymentData<F>) -> Result<Self, Self::Error> {
+        
+
         Ok(Self {
             amount_to_capture: payment_data.payment_attempt.amount_to_capture,
             currency: payment_data.currency,
@@ -464,6 +466,8 @@ impl<F: Clone> TryFrom<PaymentData<F>> for types::PaymentsCaptureData {
                 .connector_transaction_id
                 .ok_or(errors::ApiErrorResponse::MerchantConnectorAccountNotFound)?,
             amount: payment_data.amount.into(),
+            connector_metadata: payment_data.payment_attempt.connector_metadata
+
         })
     }
 }
