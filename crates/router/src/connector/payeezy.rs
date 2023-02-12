@@ -1,32 +1,36 @@
 mod transformers;
 
+use error_stack::{IntoReport, ResultExt};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use error_stack::{ResultExt, IntoReport};
 
 use crate::{
     configs::settings,
-    utils::{self, BytesExt},
     core::{
         errors::{self, CustomResult},
         payments,
     },
-    headers, logger, services::{self, ConnectorIntegration},
+    headers, logger,
+    services::{self, ConnectorIntegration},
     types::{
         self,
         api::{self, ConnectorCommon, ConnectorCommonExt},
         ErrorResponse, Response,
-    }
+    },
+    utils::{self, BytesExt},
 };
 
-
 use transformers as payeezy;
+
+use self::transformers::{PayeezyErrorData, PayeezyErrorResponse, PayeezyErrorMsg};
 
 #[derive(Debug, Clone)]
 pub struct Payeezy;
 
-impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Payeezy 
+impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Payeezy
 where
-    Self: ConnectorIntegration<Flow, Request, Response>,{
+    Self: ConnectorIntegration<Flow, Request, Response>,
+{
     fn build_headers(
         &self,
         _req: &types::RouterData<Flow, Request, Response>,
@@ -41,7 +45,10 @@ where
             (headers::ACCEPT.to_string(), "application/json".to_string()),
         ];
         let mut api_key = self.get_auth_header(&_req.connector_auth_type)?;
-        let mut token = vec![("token".to_string(),"fdoa-a480ce8951daa73262734cf102641994c1e55e7cdf4c02b6".to_string())];
+        let mut token = vec![(
+            "token".to_string(),
+            "fdoa-a480ce8951daa73262734cf102641994c1e55e7cdf4c02b6".to_string(),
+        )];
         headers.append(&mut api_key);
         headers.append(&mut token);
         Ok(headers)
@@ -62,23 +69,51 @@ impl ConnectorCommon for Payeezy {
         connectors.payeezy.base_url.as_ref()
     }
 
-    fn get_auth_header(&self, auth_type:&types::ConnectorAuthType)-> CustomResult<Vec<(String,String)>,errors::ConnectorError> {
+    fn get_auth_header(
+        &self,
+        auth_type: &types::ConnectorAuthType,
+    ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
         let auth: payeezy::PayeezyAuthType = auth_type
             .try_into()
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
-        Ok(vec![(headers::API_KEY.to_string(), auth.api_key), (headers::TOKEN.to_string(), auth.token)])
+        Ok(vec![
+            (headers::API_KEY.to_string(), auth.api_key),
+            (headers::TOKEN.to_string(), auth.token),
+        ])
+    }
+
+    fn build_error_response(
+        &self,
+        res: Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        let response: PayeezyErrorResponse = res
+            .response
+            .parse_struct("PayeezyErrorResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        let (code, message) = match response.error {
+            Some(e) => {
+                let field = e.messages.unwrap_or_else(|| Vec::new()).into_iter().next();
+                match field {
+                    Some(f) => (f.code.unwrap_or_default(), f.description.unwrap_or_default()),
+                    None => (0.to_string(), "Default Error".to_string())
+                }  
+            },
+            None => (0.to_string(), "Default Error".to_string())
+        };
+        Ok(ErrorResponse {
+            status_code: res.status_code,
+            code,
+            message,
+            ..Default::default()
+        })
     }
 }
 
 impl api::Payment for Payeezy {}
 
 impl api::PreVerify for Payeezy {}
-impl
-    ConnectorIntegration<
-        api::Verify,
-        types::VerifyRequestData,
-        types::PaymentsResponseData,
-    > for Payeezy
+impl ConnectorIntegration<api::Verify, types::VerifyRequestData, types::PaymentsResponseData>
+    for Payeezy
 {
 }
 
@@ -100,8 +135,7 @@ impl ConnectorIntegration<api::AccessTokenAuth, types::AccessTokenRequestData, t
 }
 
 impl api::PaymentSync for Payeezy {}
-impl
-    ConnectorIntegration<api::PSync, types::PaymentsSyncData, types::PaymentsResponseData>
+impl ConnectorIntegration<api::PSync, types::PaymentsSyncData, types::PaymentsResponseData>
     for Payeezy
 {
     fn get_headers(
@@ -158,7 +192,7 @@ impl
         res: Response,
     ) -> CustomResult<types::PaymentsSyncRouterData, errors::ConnectorError> {
         logger::debug!(payment_sync_response=?res);
-        let response: payeezy:: PayeezyPaymentsResponse = res
+        let response: payeezy::PayeezyPaymentsResponse = res
             .response
             .parse_struct("payeezy PaymentsResponse")
             .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
@@ -171,14 +205,9 @@ impl
     }
 }
 
-
 impl api::PaymentCapture for Payeezy {}
-impl
-    ConnectorIntegration<
-        api::Capture,
-        types::PaymentsCaptureData,
-        types::PaymentsResponseData,
-    > for Payeezy
+impl ConnectorIntegration<api::Capture, types::PaymentsCaptureData, types::PaymentsResponseData>
+    for Payeezy
 {
     fn get_headers(
         &self,
@@ -210,10 +239,10 @@ impl
         &self,
         _req: &types::PaymentsCaptureRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
-        let payeezy_req =
-            utils::Encode::<payeezy::PayeezyCaptureRequest>::convert_and_encode(_req).change_context(errors::ConnectorError::RequestEncodingFailed)?;
-        println!("[DEBUG 1] {:?}",payeezy_req);
-            Ok(Some(payeezy_req))
+        let payeezy_req = utils::Encode::<payeezy::PayeezyCaptureRequest>::convert_and_encode(_req)
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        println!("[DEBUG 1] {:?}", payeezy_req);
+        Ok(Some(payeezy_req))
     }
 
     fn build_request(
@@ -231,7 +260,7 @@ impl
                 .body(types::PaymentsCaptureType::get_request_body(self, req)?)
                 .build(),
         );
-        println!("[DEBUG] {:?}",r);
+        println!("[DEBUG] {:?}", r);
         Ok(r)
     }
 
@@ -265,119 +294,14 @@ impl
 
 impl api::PaymentVoid for Payeezy {}
 
-impl 
-    ConnectorIntegration<
-        api::Void,
-        types::PaymentsCancelData,
-        types::PaymentsResponseData,
-    > for Payeezy
-    {
-        fn get_headers(
-            &self,
-            req: &types::PaymentsCancelRouterData,
-            connectors: &settings::Connectors,
-        ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
-            self.build_headers(req, connectors)
-        }
-
-        fn get_content_type(&self) -> &'static str {
-            self.common_get_content_type()
-        }
-
-        fn get_url(
-            &self,
-            _req: &types::PaymentsCancelRouterData,
-            connectors: &settings::Connectors,
-        ) -> CustomResult<String, errors::ConnectorError> {
-            let id = _req.request.connector_transaction_id.clone();
-            Ok(format!(
-                "{}/{}/{}",
-                self.base_url(connectors),
-                "v1/transactions",
-                id
-            ))
-        }
-
-        fn get_request_body(
-            &self,
-            _req: &types::PaymentsCancelRouterData,
-        ) -> CustomResult<Option<String>, errors::ConnectorError> {
-            let payeezy_req =
-                utils::Encode::<payeezy::PayeezyVoidRequest>::convert_and_encode(_req).change_context(errors::ConnectorError::RequestEncodingFailed)?;
-            println!("[DEBUG 1] {:?}",payeezy_req);
-                Ok(Some(payeezy_req))
-        }
-
-        fn build_request(
-            &self,
-            req: &types::PaymentsCancelRouterData,
-            connectors: &settings::Connectors,
-        ) -> CustomResult<Option<services::Request>, errors::ConnectorError> {
-            let r = Some(
-                services::RequestBuilder::new()
-                    .method(services::Method::Post)
-                    .url(&types::PaymentsVoidType::get_url(self, req, connectors)?)
-                    .headers(types::PaymentsVoidType::get_headers(
-                        self, req, connectors,
-                    )?)
-                    .body(types::PaymentsVoidType::get_request_body(self, req)?)
-                    .build(),
-            );
-            println!("[DEBUG] {:?}",r);
-            Ok(r)
-        }
-
-        fn handle_response(
-            &self,
-            data: &types::PaymentsCancelRouterData,
-            res: Response,
-        ) -> CustomResult<types::PaymentsCancelRouterData, errors::ConnectorError> {
-            println!("[LOG] {:?}", res);
-            let response: payeezy::PayeezyVoidResponse = res
-                .response
-                .parse_struct("Payeezy PaymentsResponse")
-                .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
-            logger::debug!(payeezypayments_create_response=?response);
-            types::ResponseRouterData {
-                response,
-                data: data.clone(),
-                http_code: res.status_code,
-            }
-            .try_into()
-            .change_context(errors::ConnectorError::ResponseHandlingFailed)
-        }
-    
-        fn get_error_response(
-            &self,
-            res: Response,
-        ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
-            self.build_error_response(res)
-        }
-
-    }
-
-
-impl api::PaymentSession for Payeezy {}
-
-impl
-    ConnectorIntegration<
-        api::Session,
-        types::PaymentsSessionData,
-        types::PaymentsResponseData,
-    > for Payeezy
+impl ConnectorIntegration<api::Void, types::PaymentsCancelData, types::PaymentsResponseData>
+    for Payeezy
 {
-    //TODO: implement sessions flow
-}
-
-impl api::PaymentAuthorize for Payeezy {}
-
-impl
-    ConnectorIntegration<
-        api::Authorize,
-        types::PaymentsAuthorizeData,
-        types::PaymentsResponseData,
-    > for Payeezy {
-    fn get_headers(&self, req: &types::PaymentsAuthorizeRouterData, connectors: &settings::Connectors,) -> CustomResult<Vec<(String, String)>,errors::ConnectorError> {
+    fn get_headers(
+        &self,
+        req: &types::PaymentsCancelRouterData,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
         self.build_headers(req, connectors)
     }
 
@@ -385,7 +309,105 @@ impl
         self.common_get_content_type()
     }
 
-    fn get_url(&self, _req: &types::PaymentsAuthorizeRouterData, _connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
+    fn get_url(
+        &self,
+        _req: &types::PaymentsCancelRouterData,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let id = _req.request.connector_transaction_id.clone();
+        Ok(format!(
+            "{}/{}/{}",
+            self.base_url(connectors),
+            "v1/transactions",
+            id
+        ))
+    }
+
+    fn get_request_body(
+        &self,
+        _req: &types::PaymentsCancelRouterData,
+    ) -> CustomResult<Option<String>, errors::ConnectorError> {
+        let payeezy_req = utils::Encode::<payeezy::PayeezyVoidRequest>::convert_and_encode(_req)
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        println!("[DEBUG 1] {:?}", payeezy_req);
+        Ok(Some(payeezy_req))
+    }
+
+    fn build_request(
+        &self,
+        req: &types::PaymentsCancelRouterData,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Option<services::Request>, errors::ConnectorError> {
+        let r = Some(
+            services::RequestBuilder::new()
+                .method(services::Method::Post)
+                .url(&types::PaymentsVoidType::get_url(self, req, connectors)?)
+                .headers(types::PaymentsVoidType::get_headers(self, req, connectors)?)
+                .body(types::PaymentsVoidType::get_request_body(self, req)?)
+                .build(),
+        );
+        println!("[DEBUG] {:?}", r);
+        Ok(r)
+    }
+
+    fn handle_response(
+        &self,
+        data: &types::PaymentsCancelRouterData,
+        res: Response,
+    ) -> CustomResult<types::PaymentsCancelRouterData, errors::ConnectorError> {
+        println!("[LOG] {:?}", res);
+        let response: payeezy::PayeezyVoidResponse = res
+            .response
+            .parse_struct("Payeezy PaymentsResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        logger::debug!(payeezypayments_create_response=?response);
+        types::ResponseRouterData {
+            response,
+            data: data.clone(),
+            http_code: res.status_code,
+        }
+        .try_into()
+        .change_context(errors::ConnectorError::ResponseHandlingFailed)
+    }
+
+    fn get_error_response(
+        &self,
+        res: Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
+        self.build_error_response(res)
+    }
+}
+
+impl api::PaymentSession for Payeezy {}
+
+impl ConnectorIntegration<api::Session, types::PaymentsSessionData, types::PaymentsResponseData>
+    for Payeezy
+{
+    //TODO: implement sessions flow
+}
+
+impl api::PaymentAuthorize for Payeezy {}
+
+impl ConnectorIntegration<api::Authorize, types::PaymentsAuthorizeData, types::PaymentsResponseData>
+    for Payeezy
+{
+    fn get_headers(
+        &self,
+        req: &types::PaymentsAuthorizeRouterData,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
+        self.build_headers(req, connectors)
+    }
+
+    fn get_content_type(&self) -> &'static str {
+        self.common_get_content_type()
+    }
+
+    fn get_url(
+        &self,
+        _req: &types::PaymentsAuthorizeRouterData,
+        _connectors: &settings::Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
         Ok(format!(
             "{}/{}",
             self.base_url(_connectors),
@@ -393,9 +415,12 @@ impl
         ))
     }
 
-    fn get_request_body(&self, req: &types::PaymentsAuthorizeRouterData) -> CustomResult<Option<String>,errors::ConnectorError> {
-        let payeezy_req =
-            utils::Encode::<payeezy::PayeezyPaymentsRequest>::convert_and_encode(req).change_context(errors::ConnectorError::RequestEncodingFailed)?;
+    fn get_request_body(
+        &self,
+        req: &types::PaymentsAuthorizeRouterData,
+    ) -> CustomResult<Option<String>, errors::ConnectorError> {
+        let payeezy_req = utils::Encode::<payeezy::PayeezyPaymentsRequest>::convert_and_encode(req)
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(payeezy_req))
     }
 
@@ -416,7 +441,7 @@ impl
                 .body(types::PaymentsAuthorizeType::get_request_body(self, req)?)
                 .build(),
         );
-        println!("[AUTH REQ] {:?}",r);
+        println!("[AUTH REQ] {:?}", r);
         Ok(r)
     }
 
@@ -424,8 +449,11 @@ impl
         &self,
         data: &types::PaymentsAuthorizeRouterData,
         res: Response,
-    ) -> CustomResult<types::PaymentsAuthorizeRouterData,errors::ConnectorError> {
-        let response: payeezy::PayeezyPaymentsResponse = res.response.parse_struct("PaymentIntentResponse").change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+    ) -> CustomResult<types::PaymentsAuthorizeRouterData, errors::ConnectorError> {
+        let response: payeezy::PayeezyPaymentsResponse = res
+            .response
+            .parse_struct("PaymentIntentResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
         logger::debug!(payeezypayments_create_response=?response);
         types::ResponseRouterData {
             response,
@@ -436,7 +464,10 @@ impl
         .change_context(errors::ConnectorError::ResponseHandlingFailed)
     }
 
-    fn get_error_response(&self, res: Response) -> CustomResult<ErrorResponse,errors::ConnectorError> {
+    fn get_error_response(
+        &self,
+        res: Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
         self.build_error_response(res)
     }
 }
@@ -445,13 +476,14 @@ impl api::Refund for Payeezy {}
 impl api::RefundExecute for Payeezy {}
 impl api::RefundSync for Payeezy {}
 
-impl
-    ConnectorIntegration<
-        api::Execute,
-        types::RefundsData,
-        types::RefundsResponseData,
-    > for Payeezy {
-    fn get_headers(&self, req: &types::RefundsRouterData<api::Execute>, connectors: &settings::Connectors,) -> CustomResult<Vec<(String,String)>,errors::ConnectorError> {
+impl ConnectorIntegration<api::Execute, types::RefundsData, types::RefundsResponseData>
+    for Payeezy
+{
+    fn get_headers(
+        &self,
+        req: &types::RefundsRouterData<api::Execute>,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
         self.build_headers(req, connectors)
     }
 
@@ -459,7 +491,11 @@ impl
         self.common_get_content_type()
     }
 
-    fn get_url(&self, _req: &types::RefundsRouterData<api::Execute>, _connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
+    fn get_url(
+        &self,
+        _req: &types::RefundsRouterData<api::Execute>,
+        _connectors: &settings::Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
         let id = _req.request.connector_transaction_id.clone();
         Ok(format!(
             "{}/{}/{}",
@@ -469,16 +505,26 @@ impl
         ))
     }
 
-    fn get_request_body(&self, req: &types::RefundsRouterData<api::Execute>) -> CustomResult<Option<String>,errors::ConnectorError> {
-        let payeezy_req = utils::Encode::<payeezy::PayeezyRefundRequest>::convert_and_encode(req).change_context(errors::ConnectorError::RequestEncodingFailed)?;
+    fn get_request_body(
+        &self,
+        req: &types::RefundsRouterData<api::Execute>,
+    ) -> CustomResult<Option<String>, errors::ConnectorError> {
+        let payeezy_req = utils::Encode::<payeezy::PayeezyRefundRequest>::convert_and_encode(req)
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(payeezy_req))
     }
 
-    fn build_request(&self, req: &types::RefundsRouterData<api::Execute>, connectors: &settings::Connectors,) -> CustomResult<Option<services::Request>,errors::ConnectorError> {
+    fn build_request(
+        &self,
+        req: &types::RefundsRouterData<api::Execute>,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Option<services::Request>, errors::ConnectorError> {
         let request = services::RequestBuilder::new()
             .method(services::Method::Post)
             .url(&types::RefundExecuteType::get_url(self, req, connectors)?)
-            .headers(types::RefundExecuteType::get_headers(self, req, connectors)?)
+            .headers(types::RefundExecuteType::get_headers(
+                self, req, connectors,
+            )?)
             .body(types::RefundExecuteType::get_request_body(self, req)?)
             .build();
         Ok(Some(request))
@@ -488,9 +534,12 @@ impl
         &self,
         data: &types::RefundsRouterData<api::Execute>,
         res: Response,
-    ) -> CustomResult<types::RefundsRouterData<api::Execute>,errors::ConnectorError> {
+    ) -> CustomResult<types::RefundsRouterData<api::Execute>, errors::ConnectorError> {
         logger::debug!(target: "router::connector::payeezy", response=?res);
-        let response: payeezy::RefundResponse = res.response.parse_struct("payeezy RefundResponse").change_context(errors::ConnectorError::RequestEncodingFailed)?;
+        let response: payeezy::RefundResponse = res
+            .response
+            .parse_struct("payeezy RefundResponse")
+            .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         types::ResponseRouterData {
             response,
             data: data.clone(),
@@ -500,14 +549,20 @@ impl
         .change_context(errors::ConnectorError::ResponseHandlingFailed)
     }
 
-    fn get_error_response(&self, res: Response) -> CustomResult<ErrorResponse,errors::ConnectorError> {
+    fn get_error_response(
+        &self,
+        res: Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
         self.build_error_response(res)
     }
 }
 
-impl
-    ConnectorIntegration<api::RSync, types::RefundsData, types::RefundsResponseData> for Payeezy {
-    fn get_headers(&self, req: &types::RefundSyncRouterData,connectors: &settings::Connectors,) -> CustomResult<Vec<(String, String)>,errors::ConnectorError> {
+impl ConnectorIntegration<api::RSync, types::RefundsData, types::RefundsResponseData> for Payeezy {
+    fn get_headers(
+        &self,
+        req: &types::RefundSyncRouterData,
+        connectors: &settings::Connectors,
+    ) -> CustomResult<Vec<(String, String)>, errors::ConnectorError> {
         self.build_headers(req, connectors)
     }
 
@@ -515,7 +570,11 @@ impl
         self.common_get_content_type()
     }
 
-    fn get_url(&self, _req: &types::RefundSyncRouterData,_connectors: &settings::Connectors,) -> CustomResult<String,errors::ConnectorError> {
+    fn get_url(
+        &self,
+        _req: &types::RefundSyncRouterData,
+        _connectors: &settings::Connectors,
+    ) -> CustomResult<String, errors::ConnectorError> {
         todo!()
     }
 
@@ -538,9 +597,12 @@ impl
         &self,
         data: &types::RefundSyncRouterData,
         res: Response,
-    ) -> CustomResult<types::RefundSyncRouterData,errors::ConnectorError,> {
+    ) -> CustomResult<types::RefundSyncRouterData, errors::ConnectorError> {
         logger::debug!(target: "router::connector::payeezy", response=?res);
-        let response: payeezy::RefundResponse = res.response.parse_struct("payeezy RefundResponse").change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
+        let response: payeezy::RefundResponse = res
+            .response
+            .parse_struct("payeezy RefundResponse")
+            .change_context(errors::ConnectorError::ResponseDeserializationFailed)?;
         types::ResponseRouterData {
             response,
             data: data.clone(),
@@ -550,7 +612,10 @@ impl
         .change_context(errors::ConnectorError::ResponseHandlingFailed)
     }
 
-    fn get_error_response(&self, res: Response) -> CustomResult<ErrorResponse,errors::ConnectorError> {
+    fn get_error_response(
+        &self,
+        res: Response,
+    ) -> CustomResult<ErrorResponse, errors::ConnectorError> {
         self.build_error_response(res)
     }
 }

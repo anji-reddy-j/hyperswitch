@@ -1,6 +1,10 @@
 # Copy this file and rename it as `auth.toml`
 # Each of the connector's section is optional
 
+[payeezy]
+api_key = "y6pWAJNyJyjGv66IsVuWnklkKUPFbb0a"
+key1 = "fdoa-a480ce8951daa73262734cf102641994c1e55e7cdf4c02b6"
+
 [aci]
 api_key = "Bearer MyApiKey"
 key1 = "MyEntityId"

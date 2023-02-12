@@ -33,7 +33,11 @@ impl TryFrom<&types::PaymentsAuthorizeRouterData> for PayeezyPaymentsRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(_item: &types::PaymentsAuthorizeRouterData) -> Result<Self, Self::Error> {
         let merchant_ref = "Dummy Refrence".to_string();
-        let transaction_type = "authorize".to_string();
+        let transaction_type = match _item.request.mandate_id.clone() {
+            Some(m) => "recurring".to_string(),
+            None => "authorize".to_string()
+        };
+        
         let method = "credit_card".to_string();
         let amount = _item.request.amount.to_string();
         let currency_code = _item.request.currency.to_string();
@@ -601,6 +605,23 @@ impl TryFrom<types::RefundsResponseRouterData<api::RSync, RefundResponse>>
     }
 }
 
-//TODO: Fill the struct with respective fields
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct PayeezyErrorResponse {}
+pub struct PayeezyErrorResponse {
+    pub correlation_id : String,
+    #[serde(rename = "Error")]
+    pub error : Option<PayeezyErrorData>,
+    pub transaction_status : Option<String>
+}
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayeezyErrorData {
+    pub messages : Option<Vec<PayeezyErrorMsg>>,
+}
+
+
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayeezyErrorMsg {
+    pub code: Option<String>,
+    pub description: Option<String>,
+}
