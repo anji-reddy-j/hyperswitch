@@ -106,6 +106,7 @@ pub trait CardData {
     fn get_card_expiry_year(&self) -> String;
     fn get_card_expiry_year_2_digit(&self) -> String;
     fn get_card_cvc(&self) -> String;
+    fn get_card_holder_name(&self) -> String;
 }
 
 impl CardData for api::Card {
@@ -124,6 +125,9 @@ impl CardData for api::Card {
     }
     fn get_card_cvc(&self) -> String {
         self.card_cvc.peek().clone()
+    }
+    fn get_card_holder_name(&self) -> String {
+        self.card_holder_name.peek().clone()
     }
 }
 pub trait PhoneDetailsData {

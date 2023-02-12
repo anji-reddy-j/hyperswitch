@@ -50,6 +50,8 @@ pub mod headers {
     pub const X_API_VERSION: &str = "X-ApiVersion";
     pub const DATE: &str = "Date";
     pub const X_MERCHANT_ID: &str = "X-Merchant-Id";
+    pub const API_KEY: &str = "apiKey";
+    pub const TOKEN: &str = "token";
 }
 
 pub mod pii {
